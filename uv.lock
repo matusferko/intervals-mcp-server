@@ -356,7 +356,7 @@ dev = [
 requires-dist = [
     { name = "hatch", marker = "extra == 'dev'" },
     { name = "httpx", specifier = ">=0.25.0" },
-    { name = "mcp", extras = ["cli"], specifier = ">=1.4.0" },
+    { name = "mcp", extras = ["cli"], specifier = ">=1.4.0,<2.0.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "pre-commit", marker = "extra == 'dev'" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3.5" },
