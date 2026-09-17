@@ -31,6 +31,7 @@ from intervals_mcp_server.server import (  # pylint: disable=wrong-import-positi
     get_activity_details,
     get_activity_intervals,
     get_activity_messages,
+    analyze_activity_stream,
     get_activity_streams,
     add_or_update_event,
     get_athlete_power_curves,
@@ -949,3 +950,65 @@ def test_get_activities_resolves_gear_name(monkeypatch):
     assert "Ride 2" in result
     assert "Name: Litening Air" in result
     assert "Name: S-Works Tarmac SL8" in result
+
+
+def test_analyze_activity_stream(monkeypatch):
+    """
+    Test analyze_activity_stream computes time-weighted stats and threshold times,
+    skipping recording pauses (gaps > 30s) and null samples.
+    """
+    # 1s sampling; values alternate around a 10.0 threshold; one 100s pause gap
+    # and one null sample, both of which must be excluded from tracked time.
+    sample = [
+        {"type": "time", "data": [0, 1, 2, 3, 103, 104, 105]},
+        {"type": "velocity_smooth", "data": [5.0, 12.0, 12.0, 8.0, 15.0, None, 11.0]},
+    ]
+
+    async def fake_request(*_args, **_kwargs):
+        return sample
+
+    monkeypatch.setattr("intervals_mcp_server.api.client.make_intervals_request", fake_request)
+    monkeypatch.setattr(
+        "intervals_mcp_server.tools.activities_analyze_stream.make_intervals_request", fake_request
+    )
+    result = asyncio.run(analyze_activity_stream("i1", thresholds=[10.0]))
+    # Tracked: samples at t=1,2,3 (dt=1 each) and t=105 (dt=1); t=103 (gap 100s)
+    # and t=104 (null) excluded -> 4s tracked, 3s above 10.0 (12, 12, 11).
+    assert "Data Points: 7" in result
+    assert "Tracked Time (excl. pauses): 0:04" in result
+    assert "Time above 10.00 m/s (36.0 km/h): 0:03 (75.0% of tracked time)" in result
+    # Time-weighted avg over tracked samples: (12+12+8+11)/4 = 10.75 m/s
+    assert "Avg (time-weighted): 10.75 m/s (38.7 km/h)" in result
+    assert "Max: 15.00 m/s (54.0 km/h)" in result
+
+
+def test_analyze_activity_stream_missing_metric(monkeypatch):
+    """
+    Test analyze_activity_stream reports a helpful message when the metric stream is absent.
+    """
+
+    async def fake_request(*_args, **_kwargs):
+        return [{"type": "time", "data": [0, 1, 2]}]
+
+    monkeypatch.setattr("intervals_mcp_server.api.client.make_intervals_request", fake_request)
+    monkeypatch.setattr(
+        "intervals_mcp_server.tools.activities_analyze_stream.make_intervals_request", fake_request
+    )
+    result = asyncio.run(analyze_activity_stream("i1", metric="watts"))
+    assert "No 'watts' stream found" in result
+
+
+def test_analyze_activity_stream_error(monkeypatch):
+    """
+    Test analyze_activity_stream surfaces API errors.
+    """
+
+    async def fake_request(*_args, **_kwargs):
+        return {"error": True, "status_code": 404, "message": "Not found"}
+
+    monkeypatch.setattr("intervals_mcp_server.api.client.make_intervals_request", fake_request)
+    monkeypatch.setattr(
+        "intervals_mcp_server.tools.activities_analyze_stream.make_intervals_request", fake_request
+    )
+    result = asyncio.run(analyze_activity_stream("i999"))
+    assert "Error fetching activity streams: Not found" in result
